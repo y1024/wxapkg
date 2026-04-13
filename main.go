@@ -2,14 +2,15 @@ package main
 
 import (
 	"embed"
-	"github.com/wailsapp/wails/v3/pkg/application"
 	"log"
+
+	"github.com/wailsapp/wails/v3/pkg/application"
 )
 
 //go:embed all:frontend/dist
 var assets embed.FS
 
-var version = "v0.0.1"
+var version = "v2.0.0"
 var github = "https://github.com/wux1an/wxapkg"
 
 func main() {
@@ -17,7 +18,7 @@ func main() {
 
 	var service = NewAppService()
 	app := application.New(application.Options{
-		Name: "wxapkg-gui",
+		Name: "微信小程序解包工具",
 		Services: []application.Service{
 			application.NewService(service),
 		},
@@ -31,7 +32,7 @@ func main() {
 	service.SetContext(app)
 
 	app.Window.NewWithOptions(application.WebviewWindowOptions{
-		Title: "wxapkg-gui",
+		Title: "微信小程序解包工具",
 		Mac: application.MacWindow{
 			InvisibleTitleBarHeight: 50,
 			Backdrop:                application.MacBackdropTranslucent,

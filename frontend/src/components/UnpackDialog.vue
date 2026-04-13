@@ -1,15 +1,12 @@
 <script setup lang="ts">
 import Dialog from 'primevue/dialog';
-import { reactive, ref, watch, computed } from "vue";
+import { reactive, ref, watch } from "vue";
 import { UnpackOptions, WxapkgItem } from "../../bindings/github.com/wux1an/wxapkg/wechat";
 import InputText from "primevue/inputtext";
 import Checkbox from "primevue/checkbox";
-import Button from "primevue/button";
-import IconField from 'primevue/iconfield';
-import InputIcon from 'primevue/inputicon';
 import ProgressBar from 'primevue/progressbar';
 import { AppService } from "../../bindings/github.com/wux1an/wxapkg";
-import { UnpackStatusType, formatProgress } from "../entries/util";
+import { UnpackStatusType } from "../entries/util";
 
 type DialogStage = 'config' | 'progress' | 'complete' | 'error';
 
@@ -30,16 +27,15 @@ const options = reactive<UnpackOptions>({
   OutputDir: "",
 });
 
-// 添加解密密钥状态
 const decryptKey = ref('');
-
 const currentStage = ref<DialogStage>('config');
 const currentProgress = ref<WxapkgItem | null>(null);
+const actualOutputDir = ref('');
 
-// 真实输出目录：后端根据平台计算
-const actualOutputDir = ref('')
+function formatPath(path: string): string {
+  return path.replace(/\//g, '/\u200B');
+}
 
-// 监听OutputDir变化，重新计算实际输出路径
 watch(() => [options.OutputDir, item.value?.Location], async () => {
   if (options.OutputDir && item.value) {
     actualOutputDir.value = await AppService.ComputeSavePath(options.OutputDir, item.value.Location)
@@ -48,17 +44,13 @@ watch(() => [options.OutputDir, item.value?.Location], async () => {
   }
 }, { immediate: true })
 
-// Reset dialog when opening
 watch(visible, (newVal) => {
   if (newVal && item.value) {
     currentStage.value = 'config';
     currentProgress.value = item.value;
     options.OutputDir = '';
-
-    // 设置解密相关：默认启用解密
     options.EnableDecrypt = true;
 
-    // 设置解密密钥：优先使用已知的WxId，否则使用EncryptKey
     if (item.value.WxId && item.value.WxId.startsWith('wx')) {
       decryptKey.value = item.value.WxId;
     } else if (item.value.EncryptKey) {
@@ -67,7 +59,6 @@ watch(visible, (newVal) => {
       decryptKey.value = '';
     }
 
-    // If already unpacking or finished, skip to appropriate stage
     if (item.value.UnpackStatus === UnpackStatusType.Running) {
       currentStage.value = 'progress';
     } else if (item.value.UnpackStatus === UnpackStatusType.Finished) {
@@ -78,13 +69,9 @@ watch(visible, (newVal) => {
   }
 });
 
-// Watch for progress updates - 监听item的所有变化
 watch(() => item.value, (newItem) => {
   if (newItem && visible.value) {
-    // 确保使用最新的引用
     currentProgress.value = newItem
-
-    // Auto-transition stages based on status
     if (newItem.UnpackStatus === UnpackStatusType.Finished && currentStage.value === 'progress') {
       currentStage.value = 'complete';
     } else if (newItem.UnpackStatus === UnpackStatusType.Error && currentStage.value === 'progress') {
@@ -93,13 +80,6 @@ watch(() => item.value, (newItem) => {
   }
 }, { deep: true, immediate: true })
 
-// 监听visible变化，确保对话框打开时同步状态
-watch(visible, (newVisible) => {
-  if (newVisible && item.value) {
-    currentProgress.value = item.value
-  }
-})
-
 function selectFolder() {
   AppService.OpenDirectoryDialog("选择输出目录", options.OutputDir).then((result) => {
     options.OutputDir = result;
@@ -107,11 +87,9 @@ function selectFolder() {
 }
 
 function startUnpack() {
-  // 将解密密钥设置到item中
   if (item.value && decryptKey.value) {
     item.value.EncryptKey = decryptKey.value;
   }
-  // 传递真实输出目录
   options.SavePath = actualOutputDir.value;
   emit('confirm', options);
   currentStage.value = 'progress';
@@ -124,9 +102,7 @@ function openOutputDirectory() {
 }
 
 function closeDialog() {
-  // 在关闭对话框前，确保状态同步
   if (item.value && currentProgress.value) {
-    // 将最新的状态同步回item
     Object.assign(item.value, currentProgress.value)
   }
   visible.value = false;
@@ -144,84 +120,81 @@ function minimizeDialog() {
     v-model:visible="visible"
     modal
     header="解包配置"
-    :style="{ width: '32rem' }"
+    :style="{ width: '400px' }"
+    :autofocus="false"
     @after-hide="emit('afterHide')"
   >
-    <!-- 解密设置 -->
-    <div class="mb-6">
-      <h3 class="text-base font-semibold text-gray-700 mb-3">解密</h3>
-      <div class="flex items-center gap-4 mb-3">
-        <div class="flex items-center gap-2">
-          <Checkbox v-model="options.EnableDecrypt" input-id="decrypt" binary/>
-          <label for="decrypt" class="cursor-pointer text-sm">启用解密</label>
-        </div>
+    <div class="form-section">
+      <div class="section-label">解密</div>
+      <div class="form-row-check">
+        <label class="checkbox-row">
+          <input type="checkbox" v-model="options.EnableDecrypt" />
+          <span class="checkbox-row-label">启用解密</span>
+        </label>
       </div>
-      <div v-if="options.EnableDecrypt" class="space-y-2">
-        <InputText
+      <div v-if="options.EnableDecrypt" class="mt-3">
+        <input
           v-model="decryptKey"
+          class="form-input mono"
+          type="text"
           placeholder="小程序ID，如：wxabcdef1234567890"
-          fluid
-          class="font-mono"
+          style="width:100%"
         />
-        <div class="text-xs text-gray-500">
-          密钥即小程序ID，格式：wx 开头 + 16位字符
-        </div>
+        <p class="form-hint">密钥即小程序 ID，格式：wx 开头 + 16位字符</p>
       </div>
     </div>
 
-    <!-- 代码美化选项 -->
-    <div class="mb-6">
-      <h3 class="text-base font-semibold text-gray-700 mb-3">代码美化</h3>
-      <div class="flex items-center gap-4">
-        <div class="flex items-center gap-2">
-          <Checkbox v-model="options.EnableJsonBeautify" input-id="json" binary/>
-          <label for="json" class="cursor-pointer text-sm">JSON</label>
-        </div>
-        <div class="flex items-center gap-2">
-          <Checkbox v-model="options.EnableHtmlBeautify" input-id="html" binary/>
-          <label for="html" class="cursor-pointer text-sm">HTML</label>
-        </div>
-        <div class="flex items-center gap-2">
-          <Checkbox v-model="options.EnableJsBeautify" input-id="js" binary/>
-          <label for="js" class="cursor-pointer text-sm">JavaScript</label>
-        </div>
+    <div class="form-section">
+      <div class="section-label">代码美化</div>
+      <div class="check-group">
+        <label class="checkbox-row">
+          <input type="checkbox" v-model="options.EnableJsonBeautify" />
+          <span class="checkbox-row-label">JSON</span>
+        </label>
+        <label class="checkbox-row">
+          <input type="checkbox" v-model="options.EnableHtmlBeautify" />
+          <span class="checkbox-row-label">HTML</span>
+        </label>
+        <label class="checkbox-row">
+          <input type="checkbox" v-model="options.EnableJsBeautify" />
+          <span class="checkbox-row-label">JavaScript</span>
+        </label>
       </div>
     </div>
 
-    <!-- 输出目录设置 -->
-    <div class="mb-6">
-      <h3 class="text-base font-semibold text-gray-700 mb-3">输出目录</h3>
-      <IconField>
-        <InputText
+    <div class="form-section">
+      <div class="section-label">输出目录</div>
+      <div class="form-input-wrapper">
+        <input
           v-model="options.OutputDir"
           id="outputDir"
+          class="form-input"
+          type="text"
           placeholder="点击右侧图标选择输出目录"
-          fluid
-        />
-        <InputIcon
-          position="right"
-          class="pi pi-folder cursor-pointer text-primary"
+          style="width:100%; padding-right:40px"
+          readonly
           @click="selectFolder"
         />
-      </IconField>
-      <div class="text-xs text-gray-500 mt-1" v-if="options.OutputDir">
-        将输出到：{{ actualOutputDir }}
+        <i
+          class="pi pi-folder form-input-icon-right"
+          style="pointer-events:auto; cursor:pointer"
+          @click="selectFolder"
+        ></i>
       </div>
+      <p class="form-hint path-hint" v-if="options.OutputDir">
+        将输出到：<span class="path-break" v-html="formatPath(actualOutputDir)"></span>
+      </p>
     </div>
 
-    <!-- 操作按钮 -->
-    <div class="flex justify-end gap-2">
-      <Button
-        label="取消"
-        severity="secondary"
-        @click="closeDialog"
-      />
-      <Button
-        label="开始解包"
-        @click="startUnpack"
+    <div class="dialog-footer" style="padding: 16px 0 0; border: none; justify-content:flex-end; gap:8px">
+      <button class="btn-secondary" @click="closeDialog">取消</button>
+      <button
+        class="btn-primary"
         :disabled="!options.OutputDir || (options.EnableDecrypt && !decryptKey)"
-        autofocus
-      />
+        @click="startUnpack"
+      >
+        开始解包
+      </button>
     </div>
   </Dialog>
 
@@ -231,71 +204,63 @@ function minimizeDialog() {
     v-model:visible="visible"
     modal
     header="解包进行中"
-    :style="{ width: '28rem' }"
+    :style="{ width: '400px' }"
     :closable="false"
+    :autofocus="false"
   >
-    <div class="mb-6" v-if="currentProgress">
-      <div class="flex justify-between mb-2">
-        <span class="text-gray-600">总进度 {{ Math.round(currentProgress.UnpackProgress) }}%</span>
-        <span class="text-gray-500 text-sm">{{ currentProgress.UnpackCurrent }} / {{ currentProgress.UnpackTotal }}</span>
+    <div class="form-section">
+      <div class="progress-header">
+        <span class="progress-label">总进度</span>
+        <span class="progress-pct">{{ Math.round(currentProgress?.UnpackProgress ?? 0) }}%</span>
       </div>
-      <ProgressBar :value="Math.round(currentProgress.UnpackProgress)" class="h-3"/>
+      <div class="progress-track">
+        <div class="progress-fill" :style="{ width: (currentProgress?.UnpackProgress ?? 0) + '%' }"></div>
+      </div>
+      <div class="progress-sub">
+        {{ currentProgress?.UnpackCurrent }} / {{ currentProgress?.UnpackTotal }} 个文件
+      </div>
     </div>
 
-    <div
-      class="bg-gray-50 rounded-lg p-4 mb-4"
-      v-if="currentProgress?.UnpackCurrentFile"
-    >
-      <div class="text-sm text-gray-600 mb-1">当前文件</div>
-      <div class="font-mono text-sm truncate">{{ currentProgress.UnpackCurrentFile }}</div>
+    <div class="progress-file" v-if="currentProgress?.UnpackCurrentFile">
+      <div class="progress-file-label">当前文件</div>
+      <div class="progress-file-name mono">{{ currentProgress.UnpackCurrentFile }}</div>
     </div>
 
-    <div class="text-center text-gray-500 text-sm" v-if="currentProgress">
-      已处理 {{ currentProgress.UnpackCurrent }} 个文件，共 {{ currentProgress.UnpackTotal }} 个文件
-    </div>
-
-    <div class="flex justify-end">
-      <Button
-        label="后台运行"
-        severity="secondary"
-        @click="minimizeDialog"
-      />
+    <div class="dialog-footer" style="padding: 16px 0 0; border: none; justify-content:flex-end">
+      <button class="btn-secondary" @click="minimizeDialog">后台运行</button>
     </div>
   </Dialog>
 
-  <!-- Stage 3: Completion -->
+  <!-- Stage 3: Complete -->
   <Dialog
     v-else-if="currentStage === 'complete'"
     v-model:visible="visible"
     modal
     header="解包完成"
-    :style="{ width: '28rem' }"
+    :style="{ width: '400px' }"
+    :autofocus="false"
   >
-    <div class="text-center mb-6">
-      <i class="pi pi-check-circle text-6xl text-green-500 mb-3"></i>
-      <div class="text-xl font-semibold mb-2">解包成功完成</div>
-      <div class="text-gray-600" v-if="currentProgress">
+    <div class="result-center">
+      <span class="result-icon success">
+        <i class="pi pi-check-circle"></i>
+      </span>
+      <div class="result-title">解包成功完成</div>
+      <div class="result-subtitle" v-if="currentProgress">
         已解包 {{ currentProgress.UnpackTotal }} 个文件
       </div>
     </div>
 
-    <div class="bg-gray-50 rounded-lg p-4 mb-4" v-if="currentProgress?.UnpackSavePath">
-      <div class="text-sm text-gray-600 mb-1">输出目录</div>
-      <div class="font-mono text-sm truncate">{{ currentProgress.UnpackSavePath }}</div>
+    <div class="result-path" v-if="currentProgress?.UnpackSavePath">
+      <div class="result-path-label">输出目录</div>
+      <div class="result-path-value mono">{{ currentProgress.UnpackSavePath }}</div>
     </div>
 
-    <div class="flex justify-end gap-2">
-      <Button
-        label="关闭"
-        severity="secondary"
-        @click="closeDialog"
-      />
-      <Button
-        label="打开目录"
-        icon="pi pi-folder"
-        @click="openOutputDirectory"
-        autofocus
-      />
+    <div class="dialog-footer" style="padding: 16px 0 0; border: none; justify-content:flex-end; gap:8px">
+      <button class="btn-secondary" @click="closeDialog">关闭</button>
+      <button class="btn-primary" @click="openOutputDirectory">
+        <i class="pi pi-folder"></i>
+        打开目录
+      </button>
     </div>
   </Dialog>
 
@@ -305,30 +270,158 @@ function minimizeDialog() {
     v-model:visible="visible"
     modal
     header="解包失败"
-    :style="{ width: '28rem' }"
+    :style="{ width: '400px' }"
+    :autofocus="false"
   >
-    <div class="text-center mb-6">
-      <i class="pi pi-exclamation-circle text-6xl text-red-500 mb-3"></i>
-      <div class="text-xl font-semibold mb-2">解包过程中出现错误</div>
-      <div class="text-gray-600 text-sm mt-4" v-if="currentProgress?.UnpackErrorMessage">
+    <div class="result-center">
+      <span class="result-icon error">
+        <i class="pi pi-exclamation-circle"></i>
+      </span>
+      <div class="result-title">解包过程中出现错误</div>
+      <div class="result-subtitle" style="max-width:320px; margin-top:8px" v-if="currentProgress?.UnpackErrorMessage">
         {{ currentProgress.UnpackErrorMessage }}
       </div>
     </div>
 
-    <div class="bg-gray-50 rounded-lg p-4 mb-4" v-if="currentProgress?.UnpackSavePath">
-      <div class="text-sm text-gray-600 mb-1">部分输出目录</div>
-      <div class="font-mono text-sm truncate">{{ currentProgress.UnpackSavePath }}</div>
+    <div class="result-path" v-if="currentProgress?.UnpackSavePath">
+      <div class="result-path-label">部分输出目录</div>
+      <div class="result-path-value mono">{{ currentProgress.UnpackSavePath }}</div>
     </div>
 
-    <div class="flex justify-end">
-      <Button
-        label="关闭"
-        severity="secondary"
-        @click="closeDialog"
-      />
+    <div class="dialog-footer" style="padding: 16px 0 0; border: none; justify-content:flex-end">
+      <button class="btn-secondary" @click="closeDialog">关闭</button>
     </div>
   </Dialog>
 </template>
 
 <style scoped>
+.form-section {
+  margin-bottom: 20px;
+}
+
+.form-row-check {
+  margin-bottom: 8px;
+}
+
+.check-group {
+  display: flex;
+  gap: 20px;
+  flex-wrap: wrap;
+}
+
+.form-hint {
+  font-size: 12px;
+  color: var(--color-text-tertiary);
+  margin-top: 6px;
+  line-height: 1.4;
+  word-break: normal;
+  overflow-wrap: normal;
+}
+
+.path-break {
+  font-size: 12px;
+  word-break: break-all;
+  overflow-wrap: anywhere;
+}
+
+.mono {
+  font-family: ui-monospace, "SF Mono", "Menlo", monospace;
+}
+
+.mt-3 {
+  margin-top: 10px;
+}
+
+/* Progress */
+.progress-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin-bottom: 8px;
+}
+.progress-label {
+  font-size: 13px;
+  color: var(--color-text-secondary);
+}
+.progress-pct {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-near-black);
+}
+.progress-sub {
+  font-size: 12px;
+  color: var(--color-text-tertiary);
+  text-align: right;
+  margin-top: 6px;
+}
+
+.progress-file {
+  margin-top: 16px;
+  background: var(--color-light-gray);
+  border-radius: var(--radius-standard);
+  padding: 12px 14px;
+}
+.progress-file-label {
+  font-size: 12px;
+  color: var(--color-text-tertiary);
+  margin-bottom: 4px;
+}
+.progress-file-name {
+  font-size: 13px;
+  color: var(--color-text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Result */
+.result-center {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  padding: 8px 0 16px;
+}
+
+.result-icon {
+  font-size: 64px;
+  line-height: 1;
+  margin-bottom: 12px;
+  display: block;
+}
+.result-icon.success { color: #34c759; }
+.result-icon.error { color: #ff3b30; }
+
+.result-title {
+  font-family: var(--font-display);
+  font-size: 20px;
+  font-weight: 600;
+  color: var(--color-near-black);
+  margin-bottom: 4px;
+  letter-spacing: -0.02em;
+}
+
+.result-subtitle {
+  font-size: 13px;
+  color: var(--color-text-tertiary);
+}
+
+.result-path {
+  background: var(--color-light-gray);
+  border-radius: var(--radius-standard);
+  padding: 12px 14px;
+  margin-bottom: 4px;
+}
+.result-path-label {
+  font-size: 12px;
+  color: var(--color-text-tertiary);
+  margin-bottom: 4px;
+}
+.result-path-value {
+  font-size: 13px;
+  color: var(--color-text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 </style>

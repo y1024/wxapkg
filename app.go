@@ -136,5 +136,5 @@ func (a *AppService) ComputeSavePath(outputDir string, wxapkgPath string) string
 	if ext != "" {
 		baseName = baseName[:len(baseName)-len(ext)]
 	}
-	return filepath.Join(absDir, baseName)
+	return filepath.Join(absDir, baseName+"_unpacked")
 }

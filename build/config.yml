@@ -5,13 +5,13 @@ version: '3'
 
 # This information is used to generate the build assets.
 info:
-  companyName: "wux1an" # The name of the company
-  productName: "WeChat MiniProgram Unpacker" # The name of the application
-  productIdentifier: "com.wux1an.wxunpacker" # The unique product identifier
-  description: "WeChat MiniProgram Unpacker" # The application description
-  copyright: "© 2026 wux1an. All rights reserved." # Copyright text
-  comments: "For legal use only. Do not use for violating WeChat terms of service." # Comments
-  version: "2.0.0" # The application version
+  companyName: "wux1an"
+  productName: "微信小程序解包工具"
+  productIdentifier: "com.wux1an.wxapkg"
+  description: "微信小程序解包工具"
+  copyright: "© 2026 wux1an. All rights reserved."
+  comments: "仅供学习研究使用，请勿用于任何侵权或非法用途"
+  version: "2.0.0"
 
 # iOS build configuration (uncomment to customise iOS project generation)
 # Note: Keys under `ios` OVERRIDE values under `info` when set.

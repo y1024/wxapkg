@@ -2,13 +2,9 @@
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import ScanDialog from "./components/ScanDialog.vue";
 import { EventUnpackProgress, ScanPathItem } from "./entries/entries";
-import Button from "primevue/button";
-import InputText from "primevue/inputtext";
 import DataTable from 'primevue/datatable';
 import Column from 'primevue/column';
-import IconField from 'primevue/iconfield';
-import InputIcon from 'primevue/inputicon';
-import { formatSize, formatTime, UnpackStatusType, useAppToast, getUnpackButtonProps } from "./entries/util";
+import { formatSize, formatTime, UnpackStatusType, useAppToast } from "./entries/util";
 import Toast from 'primevue/toast';
 import { AppService } from "../bindings/github.com/wux1an/wxapkg/index"
 import { UnpackOptions, WxapkgItem } from "../bindings/github.com/wux1an/wxapkg/wechat"
@@ -23,15 +19,10 @@ const toast = useAppToast()
 const version = ref<string>('v0.0.0')
 const github = ref<string>('https://github.com')
 const selectedWxapkgItem = ref<WxapkgItem | null>(null);
-
-// 添加强制刷新的key
 const tableKey = ref<string>('main-table')
 
 const filteredItems = computed(() => {
-  if (!search || !search.value.trim()) {
-    return wxapkgItems.value
-  }
-
+  if (!search.value.trim()) return wxapkgItems.value
   const queryStr = search.value.toLowerCase().trim()
   return wxapkgItems.value.filter(item =>
     item.WxId.toLowerCase().includes(queryStr) ||
@@ -58,9 +49,8 @@ function confirmScan(path: ScanPathItem) {
 
 function copyPath(path: string) {
   AppService.ClipboardSetText(path)
-    .then(() => {
-      toast.info('成功', '复制路径成功')
-    }).catch(() => toast.error('失败', '复制路径失败'))
+    .then(() => toast.info('成功', '复制路径成功'))
+    .catch(() => toast.error('失败', '复制路径失败'))
 }
 
 function unpack(item: WxapkgItem) {
@@ -79,17 +69,11 @@ function openUnpackResultDirectory(path: string) {
 }
 
 function handleDialogHide() {
-  console.log('对话框关闭，最终状态同步:', selectedWxapkgItem.value?.UnpackStatus)
-
-  // 对话框关闭时，确保状态同步
   if (selectedWxapkgItem.value) {
-    const index = wxapkgItems.value.findIndex(item => item.UUID === selectedWxapkgItem.value.UUID)
+    const index = wxapkgItems.value.findIndex(item => item.UUID === selectedWxapkgItem.value!.UUID)
     if (index !== -1) {
-      console.log('强制同步状态到表格:', selectedWxapkgItem.value.UnpackStatus)
-
-      // 使用map创建新数组，确保响应式
       wxapkgItems.value = wxapkgItems.value.map((item, i) =>
-        i === index ? { ...item, ...selectedWxapkgItem.value } : item
+        i === index ? { ...item, ...selectedWxapkgItem.value! } : item
       )
     }
   }
@@ -101,52 +85,38 @@ function clearAll() {
   toast.info('清空', '已清空所有小程序')
 }
 
-// 每个UUID的防抖定时器
 const pendingTimers = new Map<string, ReturnType<typeof setTimeout>>()
-// 已发送过toast的UUID（防止重复弹toast）
 const notifiedUuids = new Set<string>()
 
 function processProgress(uuid: string) {
   AppService.GetWxapkgItem(uuid).then(data => {
     if (!data) return
-
     const index = wxapkgItems.value.findIndex(item => item.UUID === uuid)
+    if (index === -1) return
 
-    if (index !== -1) {
-      const currentItem = wxapkgItems.value[index]
-      const currentStatus = currentItem.UnpackStatus
+    const currentItem = wxapkgItems.value[index]
+    const currentStatus = currentItem.UnpackStatus
 
-      // 状态保护：不允许从 finished/error 回退到 running
-      if ((currentStatus === UnpackStatusType.Finished || currentStatus === UnpackStatusType.Error)
-          && data.UnpackStatus === UnpackStatusType.Running) {
-        return
-      }
+    if ((currentStatus === UnpackStatusType.Finished || currentStatus === UnpackStatusType.Error)
+        && data.UnpackStatus === UnpackStatusType.Running) {
+      return
+    }
 
-      // 完全替换对象
-      const updatedItem: WxapkgItem = { ...currentItem, ...data }
+    const updatedItem: WxapkgItem = { ...currentItem, ...data }
+    wxapkgItems.value = wxapkgItems.value.map((item, i) => i === index ? updatedItem : item)
+    tableKey.value = `table-${Date.now()}-${data.UnpackStatus}`
 
-      // 替换数组元素，强制响应式更新
-      wxapkgItems.value = wxapkgItems.value.map((item, i) =>
-        i === index ? updatedItem : item
-      )
+    if (unpackDialogVisible.value && selectedWxapkgItem.value?.UUID === uuid) {
+      selectedWxapkgItem.value = updatedItem
+    }
 
-      // 强制刷新DataTable
-      tableKey.value = `table-${Date.now()}-${data.UnpackStatus}`
-
-      // 如果对话框正在显示这个项目，同步更新
-      if (unpackDialogVisible.value && selectedWxapkgItem.value?.UUID === uuid) {
-        selectedWxapkgItem.value = updatedItem
-      }
-
-      // toast只弹一次（对话框不显示时才弹）
-      if (!notifiedUuids.has(uuid)) {
-        if (data.UnpackStatus === UnpackStatusType.Finished && !unpackDialogVisible.value) {
-          notifiedUuids.add(uuid)
-          toast.info('解包完成', `输出路径：${data.UnpackSavePath}`)
-        } else if (data.UnpackStatus === UnpackStatusType.Error) {
-          notifiedUuids.add(uuid)
-          toast.error('解包失败', `${data.UnpackErrorMessage}`)
-        }
+    if (!notifiedUuids.has(uuid)) {
+      if (data.UnpackStatus === UnpackStatusType.Finished && !unpackDialogVisible.value) {
+        notifiedUuids.add(uuid)
+        toast.info('解包完成', `输出路径：${data.UnpackSavePath}`)
+      } else if (data.UnpackStatus === UnpackStatusType.Error) {
+        notifiedUuids.add(uuid)
+        toast.error('解包失败', `${data.UnpackErrorMessage}`)
       }
     }
   })
@@ -155,163 +125,160 @@ function processProgress(uuid: string) {
 onMounted(() => {
   Events.On(EventUnpackProgress, callback => {
     const uuid = callback.data as string
-
-    // 清除该UUID已有的定时器，重新计时100ms
     const existing = pendingTimers.get(uuid)
     if (existing) clearTimeout(existing)
-
     const timer = setTimeout(() => {
       pendingTimers.delete(uuid)
       processProgress(uuid)
     }, 100)
-
     pendingTimers.set(uuid, timer)
   })
-
   AppService.Version().then(v => version.value = v)
   AppService.Github().then(v => github.value = v)
 })
 
 onBeforeUnmount(() => {
   Events.Off(EventUnpackProgress)
-  // 清理所有待处理的定时器
   for (const t of pendingTimers.values()) clearTimeout(t)
   pendingTimers.clear()
 })
 </script>
 
 <template>
-  <div class="flex flex-col h-screen bg-white">
-    <!-- Header -->
-    <div class="flex items-center justify-between px-6 py-4 border-b border-gray-200">
-      <div class="flex items-center space-x-4">
-        <h1 class="text-xl font-bold text-gray-800">微信小程序解包工具</h1>
-        <span class="text-sm text-gray-500">{{ version }}</span>
-      </div>
-      <div class="flex items-center space-x-2 text-sm text-gray-500">
-        <span class="hover:underline cursor-pointer" @click="openUrl(github)" v-tooltip="github">GitHub</span>
-      </div>
-    </div>
-
-    <!-- Search and Actions Bar -->
-    <div class="flex items-center justify-between px-6 py-4">
-      <IconField class="flex-1 max-w-2xl">
-        <InputIcon class="pi pi-search" />
-        <InputText v-model="search" placeholder="搜索小程序 ID 或路径" fluid />
-      </IconField>
-      <div class="flex items-center gap-3">
-        <Button
-          label="扫描小程序"
-          icon="pi pi-folder-open"
-          severity="primary"
-          @click="scanDialogVisible = true"
+  <div class="app-shell">
+    <!-- Search -->
+    <div class="search-bar">
+      <div class="search-wrapper">
+        <i class="pi pi-search search-icon"></i>
+        <input
+          v-model="search"
+          class="search-input"
+          type="text"
+          placeholder="搜索小程序 ID 或路径"
         />
-        <Button
+      </div>
+      <div class="search-actions">
+        <button
           v-if="wxapkgItems.length > 0"
-          label="清空列表"
-          icon="pi pi-trash"
-          severity="secondary"
-          outlined
+          class="btn-text"
+          style="margin-right: 20px"
           @click="clearAll"
-        />
+        >
+          <i class="pi pi-trash" style="font-size:13px"></i>
+          清空列表
+        </button>
+        <button class="btn-primary" @click="scanDialogVisible = true">
+          <i class="pi pi-folder-open"></i>
+          扫描小程序
+        </button>
       </div>
     </div>
 
-    <!-- Data Table -->
-    <div class="flex-1 px-6 pb-6 overflow-hidden">
-      <DataTable
-        :value="filteredItems"
-        data-key="UUID"
-        sortField="LastModifyTime"
-        :sortOrder="-1"
-        scrollable
-        scrollHeight="flex"
-        tableStyle="min-width: 50rem; table-layout: fixed"
-        class="font-mono h-full"
-        size="normal"
-        :key="tableKey"
-      >
+    <!-- Table -->
+    <div class="table-area">
+      <div class="table-fill">
+        <DataTable
+          :value="filteredItems"
+          data-key="UUID"
+          sortField="LastModifyTime"
+          :sortOrder="-1"
+          scrollable
+          scrollHeight="100%"
+          tableStyle="width: 100%; table-layout: fixed;"
+          :key="tableKey"
+        >
+          <colgroup>
+            <col style="width: 170px">
+            <col style="width: 180px">
+            <col style="width: 100px">
+            <col style="min-width: 200px">
+            <col style="width: 72px">
+          </colgroup>
         <template #empty>
-          <div class="flex justify-center items-center h-full text-gray-400">
-            {{ search ? `没有搜索到与 '${search}' 相关的小程序` : '没有小程序，请扫描或添加' }}
+          <div class="table-empty">
+            {{ search ? `没有搜索到与 "${search}" 相关的小程序` : '没有小程序，请扫描或添加' }}
           </div>
         </template>
 
-        <Column header="小程序ID" field="WxId" style="width: 170px" class="user-select"/>
+        <Column header="小程序 ID" field="WxId" style="width: 170px">
+          <template #body="{ data }">
+            <div class="mono" style="font-size:13px; white-space:nowrap">{{ data.WxId }}</div>
+          </template>
+        </Column>
+
         <Column header="修改时间" field="LastModifyTime" :sortable="true" style="width: 180px">
           <template #body="{ data }">
-            <div class="text-nowrap">{{ formatTime(data.LastModifyTime, false) }}</div>
+            <div style="white-space:nowrap">{{ formatTime(data.LastModifyTime, false) }}</div>
           </template>
         </Column>
-        <Column header="大小" field="Size" style="width: 100px" headerClass="text-right">
+
+        <Column header="大小" field="Size" style="width: 100px" headerClass="col-right" bodyClass="col-right">
           <template #body="{ data }">
-            <div class="text-right text-nowrap">{{ formatSize(data.Size) }}</div>
+            <div class="mono" style="font-size:13px; white-space:nowrap">{{ formatSize(data.Size) }}</div>
           </template>
         </Column>
-        <Column header="路径" field="Location">
+
+        <Column header="路径" field="Location" style="min-width: 200px">
           <template #body="{ data }">
             <div
-              class="ellipsis-left overflow-hidden text-ellipsis whitespace-nowrap cursor-default"
-              v-tooltip.bottom="data.Location + '\n点击复制'"
+              class="path-cell"
+              v-tooltip.bottom="`点击复制\n${data.Location}`"
               @click="copyPath(data.Location)"
             >
               {{ data.Location }}
             </div>
           </template>
         </Column>
-        <Column header="解包" style="width: 70px" headerClass="text-center" bodyClass="text-center">
+
+        <Column header="解包" style="width: 72px" headerClass="col-center" bodyClass="col-center">
           <template #body="{ data }">
-              <Button
-                v-if="data.UnpackStatus === UnpackStatusType.Running"
-                v-tooltip.top="`解包中 ${Math.round(data.UnpackProgress)}%`"
-                icon="pi pi-spin pi-spinner"
-                disabled
-                class="!text-blue-500 !bg-transparent !border-0 !p-0 !min-w-0 w-7 h-7 justify-center"
-                severity="text"
-                rounded
-                size="small"
-              />
-              <!-- 已完成状态 -->
-              <Button
-                v-else-if="data.UnpackStatus === UnpackStatusType.Finished"
-                v-tooltip.top="'打开目录'"
-                icon="pi pi-folder-open"
-                @click="openFolder(data.UnpackSavePath)"
-                class="!text-green-500 !bg-transparent !border-0 !p-0 !min-w-0 w-7 h-7 justify-center"
-                severity="text"
-                rounded
-                size="small"
-              />
-              <!-- 错误状态 -->
-              <Button
-                v-else-if="data.UnpackStatus === UnpackStatusType.Error"
-                v-tooltip.top="data.UnpackErrorMessage || '解包失败'"
-                icon="pi pi-times"
-                disabled
-                class="!text-red-500 !bg-transparent !border-0 !p-0 !min-w-0 w-7 h-7 justify-center"
-                severity="text"
-                rounded
-                size="small"
-              />
-              <!-- 默认状态 -->
-              <Button
-                v-else
-                v-tooltip.top="'解包'"
-                icon="pi pi-box"
-                @click="unpack(data)"
-                class="!text-gray-500 !bg-transparent !border-0 !p-0 !min-w-0 w-7 h-7 justify-center"
-                severity="text"
-                rounded
-                size="small"
-              />
+            <button
+              v-if="data.UnpackStatus === UnpackStatusType.Running"
+              class="status-dot running"
+              v-tooltip.top="`解包中 ${Math.round(data.UnpackProgress)}%`"
+              disabled
+            >
+              <i class="pi pi-spin pi-spinner"></i>
+            </button>
+            <button
+              v-else-if="data.UnpackStatus === UnpackStatusType.Finished"
+              class="status-dot finished"
+              v-tooltip.top="'打开目录'"
+              @click="openFolder(data.UnpackSavePath)"
+            >
+              <i class="pi pi-folder-open"></i>
+            </button>
+            <button
+              v-else-if="data.UnpackStatus === UnpackStatusType.Error"
+              class="status-dot error"
+              v-tooltip.top="data.UnpackErrorMessage || '解包失败'"
+              disabled
+            >
+              <i class="pi pi-times"></i>
+            </button>
+            <button
+              v-else
+              class="status-dot idle"
+              v-tooltip.top="'解包'"
+              @click="unpack(data)"
+            >
+              <i class="pi pi-box"></i>
+            </button>
           </template>
         </Column>
       </DataTable>
+      </div>
     </div>
 
     <!-- Footer -->
-    <div class="text-center text-xs text-gray-500 py-3 border-t border-gray-200">
-      本工具仅供学习研究使用，请遵守相关法律法规，不得用于非法用途
+    <div class="footer">
+      <span class="footer-disclaimer">仅供学习研究使用，请勿用于任何侵权或非法用途</span>
+      <a class="footer-right" @click.prevent="openUrl(github)">
+        <span class="footer-version">{{ version }}</span>
+        <svg viewBox="0 0 24 24" fill="currentColor" xmlns="http://www.w3.org/2000/svg" width="13" height="13">
+          <path d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.531 1.032 1.531 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0112 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.019 10.019 0 0022 12.017C22 6.484 17.522 2 12 2z"/>
+        </svg>
+      </a>
     </div>
 
     <!-- Dialogs -->
@@ -328,19 +295,178 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
-::v-deep(.p-datatable-table-container) {
-  scrollbar-width: none;
+.app-shell {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  background: var(--color-white);
+  overflow: hidden;
 }
 
-::v-deep(.p-datatable-column-sorted) {
-  background: transparent;
+/* Search */
+.search-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 20px 12px;
+  flex-shrink: 0;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.06);
 }
 
-.ellipsis-left {
+.search-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+/* Table */
+.table-area {
+  flex: 1;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  padding: 14px 20px;
+  min-height: 0;
+}
+
+.table-fill {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+  height: 100%;
+}
+
+.table-fill :deep(.p-datatable) {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.table-fill :deep(.p-datatable-table) {
+  flex: 1;
+}
+
+.table-fill :deep(.p-datatable-thead) {
+  flex-shrink: 0;
+}
+
+.table-fill :deep(.p-datatable-wrapper) {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.table-fill :deep(.p-datatable-tbody) {
+  min-height: 100%;
+}
+
+.table-area :deep(.p-datatable-thead > tr > th) {
+  background: #fafafa !important;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.08) !important;
+  color: var(--color-text-tertiary) !important;
+  font-size: 11px !important;
+  font-weight: 600 !important;
+  text-transform: uppercase !important;
+  letter-spacing: 0.05em !important;
+  padding: 10px 16px !important;
+}
+
+.table-area :deep(.p-datatable-thead > tr > th:last-child) {
+  padding-right: 16px !important;
+}
+
+.table-area :deep(.p-sortable-column:not(:last-child)) {
+  padding-right: 24px !important;
+}
+
+.table-area :deep(.p-datatable-tbody > tr > td) {
+  border-bottom: 1px solid rgba(0, 0, 0, 0.05) !important;
+  padding: 11px 16px !important;
+  color: var(--color-text-secondary) !important;
+  font-size: 14px !important;
+}
+
+.table-area :deep(.p-datatable-tbody > tr:last-child > td) {
+  border-bottom: none !important;
+}
+
+.table-area :deep(.p-datatable-tbody > tr:hover > td) {
+  background: rgba(0, 0, 0, 0.018) !important;
+}
+
+.table-area :deep(.p-datatable-column-sorted) {
+  background: transparent !important;
+}
+
+.table-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 160px;
+  color: var(--color-text-tertiary);
+  font-size: 14px;
+}
+
+.status-dot i {
+  font-size: 15px;
+}
+
+.path-cell {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
   direction: rtl;
   text-align: left;
+  font-family: ui-monospace, "SF Mono", "Menlo", monospace;
+  font-size: 13px;
+  cursor: default;
 }
+
+/* Footer */
+.footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  padding: 8px 20px;
+  border-top: 1px solid rgba(0, 0, 0, 0.05);
+  flex-shrink: 0;
+  position: relative;
+}
+
+.footer-right {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  //background: var(--color-light-gray);
+  border-radius: 980px;
+  padding: 5px 10px;
+  flex-shrink: 0;
+  cursor: pointer;
+  text-decoration: none;
+  //color: rgba(0, 0, 0, 0.5);
+  transition: background 0.15s, color 0.15s;
+}
+.footer-right:hover {
+  background: rgba(0, 0, 0, 0.1);
+  //color: var(--color-apple-blue);
+}
+
+.footer-disclaimer {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 11px;
+  color: rgba(0, 0, 0, 0.5);
+  white-space: nowrap;
+}
+
+.footer-version {
+  font-size: 11px;
+  color: rgba(0, 0, 0, 0.5);
+}
+
 </style>

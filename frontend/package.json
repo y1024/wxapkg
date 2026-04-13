@@ -10,13 +10,9 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@primevue/themes": "^4.5.2",
-    "@tailwindcss/vite": "^4.1.17",
     "@wailsio/runtime": "latest",
     "primeicons": "^7.0.0",
     "primevue": "^4.5.2",
-    "tailwindcss": "^4.1.17",
-    "tailwindcss-primeui": "^0.6.1",
     "vue": "^3.5.25"
   },
   "devDependencies": {
