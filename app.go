@@ -4,11 +4,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math/rand/v2"
 	"os"
 	"os/exec"
 	"path/filepath"
 	goruntime "runtime"
+	"slices"
 	"sync"
+	"time"
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 	"github.com/wux1an/wxapkg/wechat"
@@ -71,7 +74,50 @@ func (a *AppService) GetDefaultPaths() wechat.PathScanResult {
 }
 
 func (a *AppService) ScanWxapkgItem(path string, scan bool) ([]wechat.WxapkgItem, error) {
+	//return a.generateWxapkgItemDemo()
 	return wechat.ScanWxapkgItem(path, scan)
+}
+
+func (a *AppService) generateWxapkgItemDemo() ([]wechat.WxapkgItem, error) {
+	generateWxId := func() string {
+		hexChars := "0123456789abcdef"
+		id := "wx"
+		for i := 0; i < 16; i++ {
+			id += string(hexChars[rand.IntN(16)])
+		}
+		return id
+	}
+
+	items := make([]wechat.WxapkgItem, 10)
+	startTime := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC).Unix()
+	endTime := time.Date(2025, 12, 31, 23, 59, 59, 0, time.UTC).Unix()
+
+	for i := 0; i < 10; i++ {
+		wxId := generateWxId()
+		location := filepath.Join("C:\\Users\\Example\\Documents\\WeChat Files\\Applet", wxId)
+
+		randomTime := startTime + rand.Int64N(endTime-startTime)
+
+		item := wechat.WxapkgItem{
+			UUID:           fmt.Sprintf("demo-%d", i+1),
+			WxId:           wxId,
+			Location:       location,
+			Size:           int64(rand.IntN(5*1024*1024) + 1024*1024),
+			IsDir:          true,
+			LastModifyTime: randomTime,
+		}
+
+		items[i] = item
+	}
+
+	slices.SortFunc(items, func(e wechat.WxapkgItem, e2 wechat.WxapkgItem) int {
+		return (int)(e2.LastModifyTime - e.LastModifyTime)
+	})
+
+	items[0].UnpackStatus = wechat.StatusTypeFinished
+	items[1].UnpackStatus = wechat.StatusTypeRunning
+
+	return items, nil
 }
 
 func (a *AppService) ClipboardSetText(text string) error {
