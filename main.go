@@ -12,7 +12,7 @@ import (
 //go:embed all:frontend/dist
 var assets embed.FS
 
-var version = "v2.0.0"
+var version = "v2.0.1"
 var github = "https://github.com/wux1an/wxapkg"
 
 func main() {

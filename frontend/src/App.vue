@@ -7,13 +7,28 @@ import Column from 'primevue/column';
 import { formatSize, formatTime, UnpackStatusType, useAppToast } from "./entries/util";
 import Toast from 'primevue/toast';
 import UnpackDialog from "./components/UnpackDialog.vue";
+import SettingsDialog from "./components/SettingsDialog.vue";
 import {wechat} from "../wailsjs/go/models";
 import WxapkgItem = wechat.WxapkgItem;
 import UnpackOptions = wechat.UnpackOptions;
 import * as AppService from '../wailsjs/go/main/AppService';
 
+interface OutputDirSelectionPayload {
+  outputDir: string;
+  setAsDefault: boolean;
+  useInSession: boolean;
+}
+
+interface StoredOutputDirectoryPreference {
+  defaultOutputDir: string;
+  lastOutputDir: string;
+}
+
+const OUTPUT_DIRECTORY_PREF_STORAGE_KEY = 'wxapkg:output-directory:preference:v1';
+
 const scanDialogVisible = ref(false)
 const unpackDialogVisible = ref(false)
+const settingsDialogVisible = ref(false)
 const search = ref<string>('')
 const wxapkgItems = ref<WxapkgItem[]>([]);
 const toast = useAppToast()
@@ -21,6 +36,9 @@ const version = ref<string>('v0.0.0')
 const github = ref<string>('https://github.com')
 const selectedWxapkgItem = ref<WxapkgItem | null>(null);
 const tableKey = ref<string>('main-table')
+const defaultOutputDir = ref('')
+const lastOutputDir = ref('')
+const sessionOutputDir = ref('')
 
 const filteredItems = computed(() => {
   if (!search.value.trim()) return wxapkgItems.value
@@ -64,6 +82,56 @@ function confirmUnpack(options: UnpackOptions) {
   if (selectedWxapkgItem.value) {
     AppService.UnpackWxapkgItem(selectedWxapkgItem.value, options)
   }
+}
+
+function loadOutputDirectoryPreference() {
+  try {
+    const raw = localStorage.getItem(OUTPUT_DIRECTORY_PREF_STORAGE_KEY)
+    if (!raw) return
+    const parsed = JSON.parse(raw) as Partial<StoredOutputDirectoryPreference>
+    defaultOutputDir.value = (parsed.defaultOutputDir ?? '').trim()
+    lastOutputDir.value = (parsed.lastOutputDir ?? '').trim()
+  } catch {
+    defaultOutputDir.value = ''
+    lastOutputDir.value = ''
+  }
+}
+
+function persistOutputDirectoryPreference() {
+  const data: StoredOutputDirectoryPreference = {
+    defaultOutputDir: defaultOutputDir.value.trim(),
+    lastOutputDir: lastOutputDir.value.trim(),
+  }
+  localStorage.setItem(OUTPUT_DIRECTORY_PREF_STORAGE_KEY, JSON.stringify(data))
+}
+
+function saveDefaultOutputDir(path: string) {
+  defaultOutputDir.value = path.trim()
+  if (sessionOutputDir.value && sessionOutputDir.value === defaultOutputDir.value) {
+    sessionOutputDir.value = ''
+  }
+  persistOutputDirectoryPreference()
+}
+
+function handleOutputDirSelected(payload: OutputDirSelectionPayload) {
+  const dir = payload.outputDir.trim()
+  if (!dir) {
+    return
+  }
+
+  lastOutputDir.value = dir
+
+  if (payload.setAsDefault) {
+    defaultOutputDir.value = dir
+  }
+
+  if (payload.useInSession) {
+    sessionOutputDir.value = dir
+  } else if (sessionOutputDir.value === dir) {
+    sessionOutputDir.value = ''
+  }
+
+  persistOutputDirectoryPreference()
 }
 
 function openUnpackResultDirectory(path: string) {
@@ -132,6 +200,7 @@ function processProgress(uuid: string) {
 }
 
 onMounted(() => {
+  loadOutputDirectoryPreference()
   window.runtime.EventsOn(EventUnpackProgress, (uuid: string) => {
     processProgress(uuid)
   })
@@ -158,6 +227,10 @@ onBeforeUnmount(() => {
         />
       </div>
       <div class="search-actions">
+        <button class="btn-text" style="margin-right: 6px" @click="settingsDialogVisible = true">
+          <i class="pi pi-cog" style="font-size:13px"></i>
+          设置
+        </button>
         <button
           v-if="wxapkgItems.length > 0"
           class="btn-text"
@@ -275,9 +348,18 @@ onBeforeUnmount(() => {
     <UnpackDialog
       v-model:visible="unpackDialogVisible"
       v-model:item="selectedWxapkgItem"
+      :default-output-dir="defaultOutputDir"
+      :last-output-dir="lastOutputDir"
+      :session-output-dir="sessionOutputDir"
       @after-hide="handleDialogHide"
       @confirm="confirmUnpack"
+      @output-dir-selected="handleOutputDirSelected"
       @open-directory="openUnpackResultDirectory"
+    />
+    <SettingsDialog
+      v-model:visible="settingsDialogVisible"
+      :default-output-dir="defaultOutputDir"
+      @save="saveDefaultOutputDir"
     />
     <Toast position="bottom-right" />
   </div>
@@ -430,18 +512,18 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   gap: 6px;
-  //background: var(--color-light-gray);
+  /* background: var(--color-light-gray); */
   border-radius: 980px;
   padding: 5px 10px;
   flex-shrink: 0;
   cursor: pointer;
   text-decoration: none;
-  //color: rgba(0, 0, 0, 0.5);
+  /* color: rgba(0, 0, 0, 0.5); */
   transition: background 0.15s, color 0.15s;
 }
 .footer-right:hover {
   background: rgba(0, 0, 0, 0.1);
-  //color: var(--color-apple-blue);
+  /* color: var(--color-apple-blue); */
 }
 
 .footer-disclaimer {

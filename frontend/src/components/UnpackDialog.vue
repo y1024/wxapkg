@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import Dialog from 'primevue/dialog';
-import { reactive, ref, watch } from "vue";
+import { computed, reactive, ref, watch } from "vue";
 import * as AppService from '../../wailsjs/go/main/AppService';
 import { UnpackStatusType } from "../entries/util";
 import {wechat} from "../../wailsjs/go/models";
@@ -9,10 +9,27 @@ import WxapkgItem = wechat.WxapkgItem;
 
 type DialogStage = 'config' | 'progress' | 'complete' | 'error';
 
+interface OutputDirSelection {
+  outputDir: string;
+  setAsDefault: boolean;
+  useInSession: boolean;
+}
+
+const props = withDefaults(defineProps<{
+  defaultOutputDir?: string;
+  lastOutputDir?: string;
+  sessionOutputDir?: string;
+}>(), {
+  defaultOutputDir: '',
+  lastOutputDir: '',
+  sessionOutputDir: '',
+});
+
 const emit = defineEmits<{
   confirm: [options: UnpackOptions];
   afterHide: [];
   openDirectory: [path: string];
+  outputDirSelected: [payload: OutputDirSelection];
 }>();
 
 const visible = defineModel<boolean>('visible', { default: false });
@@ -30,6 +47,32 @@ const decryptKey = ref('');
 const currentStage = ref<DialogStage>('config');
 const currentProgress = ref<WxapkgItem | null>(null);
 const actualOutputDir = ref('');
+const setAsDefaultOutputDir = ref(false);
+const useOutputDirInSession = ref(false);
+
+const normalizedDefaultOutputDir = computed(() => normalizeDir(props.defaultOutputDir));
+const shouldShowOutputDirOptions = computed(() => {
+  if (!options.OutputDir) {
+    return false;
+  }
+  return normalizeDir(options.OutputDir) !== normalizedDefaultOutputDir.value;
+});
+
+function isWindowsPlatform(): boolean {
+  return typeof navigator !== 'undefined' && /windows/i.test(navigator.userAgent);
+}
+
+function normalizeDir(path: string): string {
+  const normalizedPath = path.trim().replace(/[\\/]+/g, '/').replace(/\/+$/, '');
+  return isWindowsPlatform() ? normalizedPath.toLowerCase() : normalizedPath;
+}
+
+function getInitialOutputDir(): string {
+  return props.sessionOutputDir.trim()
+    || props.defaultOutputDir.trim()
+    || props.lastOutputDir.trim()
+    || '';
+}
 
 watch(() => [options.OutputDir, item.value?.Location], async () => {
   if (options.OutputDir && item.value) {
@@ -43,8 +86,10 @@ watch(visible, (newVal) => {
   if (newVal && item.value) {
     currentStage.value = 'config';
     currentProgress.value = item.value;
-    options.OutputDir = '';
+    options.OutputDir = getInitialOutputDir();
     options.EnableDecrypt = true;
+    setAsDefaultOutputDir.value = false;
+    useOutputDirInSession.value = false;
 
     if (item.value.WxId && item.value.WxId.startsWith('wx')) {
       decryptKey.value = item.value.WxId;
@@ -61,6 +106,13 @@ watch(visible, (newVal) => {
     } else if (item.value.UnpackStatus === UnpackStatusType.Error) {
       currentStage.value = 'error';
     }
+  }
+});
+
+watch(() => options.OutputDir, () => {
+  if (!shouldShowOutputDirOptions.value) {
+    setAsDefaultOutputDir.value = false;
+    useOutputDirInSession.value = false;
   }
 });
 
@@ -81,12 +133,30 @@ function selectFolder() {
   });
 }
 
-function startUnpack() {
-  if (item.value && decryptKey.value) {
+async function startUnpack() {
+  if (!item.value) {
+    return;
+  }
+
+  if (decryptKey.value) {
     item.value.EncryptKey = decryptKey.value;
   }
-  options.SavePath = actualOutputDir.value;
-  emit('confirm', options);
+
+  const outputDir = options.OutputDir.trim();
+  let savePath = actualOutputDir.value;
+  if (!savePath) {
+    savePath = await AppService.ComputeSavePath(outputDir, item.value.Location);
+  }
+
+  emit('outputDirSelected', {
+    outputDir,
+    setAsDefault: shouldShowOutputDirOptions.value && setAsDefaultOutputDir.value,
+    useInSession: shouldShowOutputDirOptions.value && useOutputDirInSession.value,
+  });
+
+  options.OutputDir = outputDir;
+  options.SavePath = savePath;
+  emit('confirm', { ...options });
   currentStage.value = 'progress';
 }
 
@@ -165,10 +235,8 @@ function minimizeDialog() {
           id="outputDir"
           class="form-input"
           type="text"
-          placeholder="点击右侧图标选择输出目录"
+          placeholder="可手动输入，或点击右侧图标选择输出目录"
           style="width:100%; padding-right:40px"
-          readonly
-          @click="selectFolder"
         />
         <i
           class="pi pi-folder form-input-icon-right"
@@ -181,11 +249,24 @@ function minimizeDialog() {
       </p>
     </div>
 
+    <div class="form-section" v-if="shouldShowOutputDirOptions">
+      <div class="check-group-column">
+        <label class="checkbox-row">
+          <input type="checkbox" v-model="setAsDefaultOutputDir" />
+          <span class="checkbox-row-label">将当前目录作为默认目录</span>
+        </label>
+        <label class="checkbox-row">
+          <input type="checkbox" v-model="useOutputDirInSession" />
+          <span class="checkbox-row-label">下次也使用该目录输出（本次会话有效）</span>
+        </label>
+      </div>
+    </div>
+
     <div class="dialog-footer" style="padding: 16px 0 0; border: none; justify-content:flex-end; gap:8px">
       <button class="btn-secondary" @click="closeDialog">取消</button>
       <button
         class="btn-primary"
-        :disabled="!options.OutputDir || (options.EnableDecrypt && !decryptKey)"
+        :disabled="!options.OutputDir.trim() || (options.EnableDecrypt && !decryptKey)"
         @click="startUnpack"
       >
         开始解包
@@ -302,6 +383,12 @@ function minimizeDialog() {
   display: flex;
   gap: 20px;
   flex-wrap: wrap;
+}
+
+.check-group-column {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
 
 .form-hint {
